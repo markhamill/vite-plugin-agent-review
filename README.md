@@ -171,6 +171,64 @@ agentReviewPlugin({
 
 ---
 
+## 🌐 Adapting to Other Stacks (Next.js, Astro, Webpack)
+
+While this repository packages a Vite plugin by default, the underlying architecture is completely stack-agnostic. 
+
+- **The Client**: `AgentReviewToolbar.tsx` relies entirely on native browser DOM APIs (`getBoundingClientRect`, `innerText`, `fetch`). It has zero bundler-specific lock-in.
+- **The Server**: The plugin is simply a lightweight local endpoint that writes incoming JSON to `.agent-feedback.json` on disk.
+
+Here is how you can use this exact pattern in other environments:
+
+### 1. Astro, SvelteKit, and Nuxt
+Because these frameworks build on Vite, the included `agentReviewPlugin()` works out of the box in `astro.config.mjs`, `svelte.config.js`, or `nuxt.config.ts`.
+
+### 2. Next.js (App Router)
+Instead of a Vite plugin, create a development route handler at `app/api/dev/feedback/route.ts`:
+
+```ts
+import fs from "node:fs"
+import path from "node:path"
+
+export async function POST(req: Request) {
+  // Guard: run strictly in development
+  if (process.env.NODE_ENV !== "development") {
+    return new Response(null, { status: 404 })
+  }
+
+  const body = await req.json()
+  const feedbackFilePath = path.resolve(process.cwd(), ".agent-feedback.json")
+  fs.writeFileSync(feedbackFilePath, JSON.stringify(body, null, 2), "utf-8")
+
+  return Response.json({ success: true, count: body.items?.length || 0 })
+}
+```
+
+In `app/layout.tsx`, mount the toolbar conditionally:
+```tsx
+{process.env.NODE_ENV === "development" && <AgentReviewToolbar />}
+```
+
+### 3. Webpack Dev Server
+Webpack Dev Server uses the exact same Connect middleware interface. Add the route in your `webpack.config.js`:
+
+```js
+devServer: {
+  setupMiddlewares: (middlewares, devServer) => {
+    devServer.app.use("/api/dev/feedback", require("express").json(), (req, res) => {
+      fs.writeFileSync(".agent-feedback.json", JSON.stringify(req.body, null, 2));
+      res.json({ success: true });
+    });
+    return middlewares;
+  }
+}
+```
+
+### 4. Non-Node Backends (FastAPI, Django, Rails)
+Simply create a local development endpoint (`POST /api/dev/feedback`) in your backend framework that receives the JSON payload and writes it directly to `.agent-feedback.json` at your repository root.
+
+---
+
 ## 📄 License
 
 MIT © [Mark Hamill](https://github.com/markhamill)
