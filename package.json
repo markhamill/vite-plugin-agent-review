@@ -1,0 +1,24 @@
+{
+  "name": "vite-plugin-agent-review",
+  "version": "0.1.0",
+  "description": "In-browser visual review and editorial harness for AI coding agents",
+  "type": "module",
+  "main": "./vite-plugin-agent-review.ts",
+  "keywords": [
+    "vite",
+    "vite-plugin",
+    "ai-agents",
+    "antigravity",
+    "claude-code",
+    "cursor",
+    "human-in-the-loop",
+    "code-review",
+    "pair-programming"
+  ],
+  "author": "Mark Hamill",
+  "license": "MIT",
+  "peerDependencies": {
+    "react": ">=18.0.0",
+    "vite": ">=5.0.0"
+  }
+}
