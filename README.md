@@ -245,6 +245,12 @@ In complex web applications with repeated structures (such as comparison tables,
 4. **Viewport-Aware Popover Clamping and Pinned Actions**:
    The editing popover dynamically computes available viewport space. If an element sits near the bottom edge of the screen, the popover flips above the element. The popover uses a vertical flex layout with a scrollable text area and pinned action buttons (`Apply Edit` and `Cancel`), ensuring save controls are never pushed below the fold.
 
+5. **Non-Blocking In-Widget Confirmations**:
+   Destructive actions like clearing all staged feedback use inline confirmation prompts directly inside the drawer instead of browser-level alert modals (`window.confirm`), keeping the review workflow smooth and distraction-free.
+
+6. **Shift-Resistant Reapply Matching**:
+   When restoring saved edits on page load or after hot reload, the reapply algorithm verifies that candidate elements match expected text before making adjustments, preventing edits from jumping to unrelated nodes if page sections are added or removed.
+
 ---
 
 ## 🛠️ Repository Maintenance and Committing Updates

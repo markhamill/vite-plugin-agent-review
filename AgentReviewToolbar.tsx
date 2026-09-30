@@ -123,6 +123,7 @@ export default function AgentReviewToolbar({
   const [activeTab, setActiveTab] = useState<"copy" | "note">("copy")
   const [submitStatus, setSubmitStatus] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isConfirmingClear, setIsConfirmingClear] = useState(false)
   const [popoverPos, setPopoverPos] = useState<{ top: number; left: number }>({
     top: 60,
     left: 40,
@@ -284,30 +285,42 @@ export default function AgentReviewToolbar({
     if (pageItems.length === 0) return
 
     pageItems.forEach((item) => {
-      if (!item.originalText || !item.newText) return
+      const normalize = (s: string) => s.replace(/\s+/g, " ").trim()
+
+      // Try finding by selector first, but verify it matches original or new text
       let target: HTMLElement | null = null
       if (item.selector) {
         try {
-          target = document.querySelector(item.selector)
+          const candidate = document.querySelector<HTMLElement>(item.selector)
+          if (
+            candidate &&
+            (normalize(candidate.innerText) === normalize(item.originalText) ||
+              normalize(candidate.innerText) === normalize(item.newText))
+          ) {
+            target = candidate
+          }
         } catch {
           target = null
         }
       }
 
-      if (!target || target.innerText.trim() !== item.originalText) {
+      // If selector did not match (e.g. DOM indices shifted after deletions/insertions), scan by text
+      if (!target) {
         const allCandidates = document.querySelectorAll<HTMLElement>(
           "h1, h2, h3, h4, h5, p, span, button, a, li, blockquote",
         )
         for (const el of allCandidates) {
           if (el.closest("[data-agent-review-ignore='true']")) continue
-          if (el.innerText.trim() === item.originalText) {
+          if (
+            normalize(el.innerText) === normalize(item.originalText) ||
+            normalize(el.innerText) === normalize(item.newText)
+          ) {
             target = el
             break
           }
         }
       }
 
-      const normalize = (s: string) => s.replace(/\s+/g, " ").trim()
       if (target) {
         target.setAttribute("data-agent-review-id", item.id)
         if (normalize(target.innerText) === normalize(item.newText)) {
@@ -476,33 +489,32 @@ export default function AgentReviewToolbar({
 
   // Clear all staged items
   const handleClearAll = () => {
-    if (window.confirm("Are you sure you want to clear all staged feedback?")) {
-      items.forEach((item) => {
-        try {
-          const el =
-            (item.selector
-              ? document.querySelector<HTMLElement>(item.selector)
-              : null) ||
-            document.querySelector<HTMLElement>(
-              `[data-agent-review-id="${item.id}"]`,
-            )
-          if (el) {
-            if (item.type === "copy_edit" && item.originalText) {
-              el.innerText = item.originalText
-            }
-            el.removeAttribute("data-agent-review-modified")
-            el.removeAttribute("data-agent-review-id")
-          }
-        } catch {
-          // ignore
-        }
-      })
-      setItems([])
+    items.forEach((item) => {
       try {
-        localStorage.removeItem(STORAGE_KEY)
+        const el =
+          (item.selector
+            ? document.querySelector<HTMLElement>(item.selector)
+            : null) ||
+          document.querySelector<HTMLElement>(
+            `[data-agent-review-id="${item.id}"]`,
+          )
+        if (el) {
+          if (item.type === "copy_edit" && item.originalText) {
+            el.innerText = item.originalText
+          }
+          el.removeAttribute("data-agent-review-modified")
+          el.removeAttribute("data-agent-review-id")
+        }
       } catch {
         // ignore
       }
+    })
+    setItems([])
+    setIsConfirmingClear(false)
+    try {
+      localStorage.removeItem(STORAGE_KEY)
+    } catch {
+      // ignore
     }
   }
 
@@ -771,7 +783,10 @@ export default function AgentReviewToolbar({
               </p>
             </div>
             <button
-              onClick={() => setIsDrawerOpen(false)}
+              onClick={() => {
+                setIsDrawerOpen(false)
+                setIsConfirmingClear(false)
+              }}
               className="text-neutral-400 hover:text-neutral-100 text-sm cursor-pointer p-1"
             >
               ✕
@@ -781,12 +796,30 @@ export default function AgentReviewToolbar({
           {submitStatus && (
             <div className="p-3 bg-emerald-500/15 border-b border-emerald-500/30 text-xs text-emerald-400 flex items-center justify-between gap-3 leading-relaxed">
               <span>{submitStatus}</span>
-              <button
-                onClick={handleClearAll}
-                className="shrink-0 font-bold underline hover:text-neutral-100 cursor-pointer text-[10px] uppercase tracking-wider"
-              >
-                Clear Staged Draft
-              </button>
+              {isConfirmingClear ? (
+                <div className="flex items-center gap-1.5 shrink-0 bg-rose-500/20 border border-rose-500/40 px-2 py-1 rounded-xs">
+                  <span className="text-[10px] text-neutral-100 font-bold">Clear all?</span>
+                  <button
+                    onClick={handleClearAll}
+                    className="text-[10px] font-bold uppercase bg-rose-500 text-neutral-950 px-1.5 py-0.5 rounded-xs hover:brightness-110 cursor-pointer"
+                  >
+                    Yes
+                  </button>
+                  <button
+                    onClick={() => setIsConfirmingClear(false)}
+                    className="text-[10px] text-neutral-400 hover:text-neutral-100 cursor-pointer px-1"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setIsConfirmingClear(true)}
+                  className="shrink-0 font-bold underline hover:text-neutral-100 cursor-pointer text-[10px] uppercase tracking-wider"
+                >
+                  Clear Staged Draft
+                </button>
+              )}
             </div>
           )}
 
@@ -850,13 +883,33 @@ export default function AgentReviewToolbar({
           </div>
 
           <div className="p-4 border-t border-neutral-800 bg-neutral-950/80 flex items-center justify-between gap-3">
-            <button
-              onClick={handleClearAll}
-              disabled={items.length === 0}
-              className="text-xs uppercase tracking-wider text-neutral-400 hover:text-rose-400 disabled:opacity-30 disabled:hover:text-neutral-400 cursor-pointer transition-colors"
-            >
-              Clear All
-            </button>
+            {isConfirmingClear ? (
+              <div className="flex items-center gap-2 bg-rose-500/15 border border-rose-500/40 px-2.5 py-1.5 rounded-xs">
+                <span className="text-[11px] text-neutral-100 font-medium">
+                  Clear all edits?
+                </span>
+                <button
+                  onClick={handleClearAll}
+                  className="text-[10px] font-bold uppercase tracking-wider bg-rose-500 text-neutral-950 px-2 py-1 hover:brightness-110 cursor-pointer rounded-xs transition-all shadow-xs"
+                >
+                  Confirm
+                </button>
+                <button
+                  onClick={() => setIsConfirmingClear(false)}
+                  className="text-[10px] uppercase tracking-wider text-neutral-400 hover:text-neutral-100 px-1.5 py-1 cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setIsConfirmingClear(true)}
+                disabled={items.length === 0}
+                className="text-xs uppercase tracking-wider text-neutral-400 hover:text-rose-400 disabled:opacity-30 disabled:hover:text-neutral-400 cursor-pointer transition-colors"
+              >
+                Clear All
+              </button>
+            )}
 
             <button
               onClick={handleSayGo}
