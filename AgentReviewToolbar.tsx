@@ -79,9 +79,9 @@ function isEditableTarget(target: HTMLElement | null): boolean {
   if (standardTextTags.includes(target.tagName)) {
     return true
   }
-  // Badges, pill tags, or small containers
+  // Badges, pill tags, or small leaf containers (no children)
   if (["DIV", "SECTION", "ASIDE", "HEADER"].includes(target.tagName)) {
-    if (target.childElementCount <= 2 && text.length > 0 && text.length < 350) {
+    if (target.childElementCount === 0 && text.length > 0 && text.length < 350) {
       return true
     }
   }
@@ -123,9 +123,64 @@ export default function AgentReviewToolbar({
   const [activeTab, setActiveTab] = useState<"copy" | "note">("copy")
   const [submitStatus, setSubmitStatus] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number }>({
+    top: 60,
+    left: 40,
+  })
 
   const hoveredElementRef = useRef<HTMLElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
+
+  // Measure and position popover reliably within viewport so buttons are never cut off
+  useEffect(() => {
+    if (!activeTarget) return
+
+    const updatePosition = () => {
+      const popoverEl = popoverRef.current
+      const popWidth = popoverEl ? popoverEl.offsetWidth : 440
+      const popHeight = popoverEl ? popoverEl.offsetHeight : 440
+      const padding = 16
+
+      const targetRect = activeTarget.element.getBoundingClientRect()
+
+      // Horizontal positioning: align with target left, clamp within viewport
+      let left = targetRect.left
+      if (left + popWidth > window.innerWidth - padding) {
+        left = window.innerWidth - popWidth - padding
+      }
+      if (left < padding) {
+        left = padding
+      }
+
+      // Vertical positioning:
+      // If placing at targetRect.top would push popover below viewport bottom:
+      let top = targetRect.top
+      if (top + popHeight > window.innerHeight - padding) {
+        // Can we place it above target?
+        if (targetRect.top - popHeight - 8 >= padding) {
+          top = targetRect.top - popHeight - 8
+        } else {
+          // Clamp so that bottom of popover sits safely above viewport bottom
+          top = Math.max(padding, window.innerHeight - popHeight - padding)
+        }
+      }
+      if (top < padding) {
+        top = padding
+      }
+
+      setPopoverPos({ top, left })
+    }
+
+    const timer = setTimeout(updatePosition, 10)
+    window.addEventListener("resize", updatePosition)
+    window.addEventListener("scroll", updatePosition, true)
+
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener("resize", updatePosition)
+      window.removeEventListener("scroll", updatePosition, true)
+    }
+  }, [activeTarget, editCopyValue, noteValue, activeTab])
 
   // Persist items to local storage
   useEffect(() => {
@@ -176,14 +231,14 @@ export default function AgentReviewToolbar({
     return ""
   }
 
-  // Helper to generate a friendly CSS selector
+  // Helper to generate an unambiguous CSS selector that uniquely resolves to this element
   const generateSelector = (el: HTMLElement): string => {
-    if (el.id) return `#${el.id}`
+    if (el.id && el.id !== "root") return `#${el.id}`
     const path: string[] = []
     let curr: HTMLElement | null = el
-    while (curr && curr !== document.body && path.length < 3) {
-      let segment = curr.tagName.toLowerCase()
-      if (curr.id) {
+
+    while (curr && curr !== document.body && curr !== document.documentElement) {
+      if (curr.id && curr.id !== "root") {
         path.unshift(`#${curr.id}`)
         break
       }
@@ -191,6 +246,8 @@ export default function AgentReviewToolbar({
         path.unshift(`[data-section="${curr.getAttribute("data-section")}"]`)
         break
       }
+
+      let segment = curr.tagName.toLowerCase()
       const parent = curr.parentElement
       if (parent) {
         const siblings = Array.from(parent.children).filter(
@@ -202,7 +259,19 @@ export default function AgentReviewToolbar({
         }
       }
       path.unshift(segment)
-      curr = curr.parentElement
+
+      // Test if current accumulated path uniquely resolves to this exact element
+      try {
+        const testSelector = path.join(" > ")
+        const matches = document.querySelectorAll(testSelector)
+        if (matches.length === 1 && matches[0] === el) {
+          return testSelector
+        }
+      } catch {
+        // ignore invalid syntax
+      }
+
+      curr = parent
     }
     return path.join(" > ")
   }
@@ -240,6 +309,7 @@ export default function AgentReviewToolbar({
 
       const normalize = (s: string) => s.replace(/\s+/g, " ").trim()
       if (target) {
+        target.setAttribute("data-agent-review-id", item.id)
         if (normalize(target.innerText) === normalize(item.newText)) {
           target.removeAttribute("data-agent-review-modified")
         } else {
@@ -285,13 +355,21 @@ export default function AgentReviewToolbar({
       const selector = generateSelector(target)
       const rect = target.getBoundingClientRect()
 
-      const existing = items.find(
-        (i) =>
-          i.page === currentView &&
-          ((i.originalText && i.originalText === text) ||
-            (i.newText && i.newText === text) ||
-            (i.selector && i.selector === selector)),
-      )
+      // Check if this exact element has already been edited (using DOM tag or exact element reference)
+      const existingId = target.getAttribute("data-agent-review-id")
+      const existing = existingId
+        ? items.find((i) => i.id === existingId)
+        : items.find((i) => {
+            if (i.page !== currentView) return false
+            if (i.selector) {
+              try {
+                return document.querySelector(i.selector) === target
+              } catch {
+                return false
+              }
+            }
+            return false
+          })
 
       setActiveTarget({
         element: target,
@@ -304,7 +382,7 @@ export default function AgentReviewToolbar({
         existingItemId: existing?.id,
       })
 
-      setEditCopyValue(text)
+      setEditCopyValue(existing?.newText || text)
       setNoteValue(existing?.note || "")
       setActiveTab(existing?.type === "design_note" ? "note" : "copy")
     }
@@ -362,6 +440,7 @@ export default function AgentReviewToolbar({
       activeTarget.element.innerText = editCopyValue.trim()
       activeTarget.element.setAttribute("data-agent-review-modified", "true")
     }
+    activeTarget.element.setAttribute("data-agent-review-id", newItem.id)
 
     setItems((prev) => {
       const filtered = prev.filter((i) => i.id !== newItem.id)
@@ -374,14 +453,19 @@ export default function AgentReviewToolbar({
   // Delete/revert single item
   const handleDeleteItem = (id: string) => {
     const item = items.find((i) => i.id === id)
-    if (item && item.type === "copy_edit" && item.originalText) {
+    if (item) {
       try {
-        if (item.selector) {
-          const el = document.querySelector<HTMLElement>(item.selector)
-          if (el) {
+        const el =
+          (item.selector
+            ? document.querySelector<HTMLElement>(item.selector)
+            : null) ||
+          document.querySelector<HTMLElement>(`[data-agent-review-id="${id}"]`)
+        if (el) {
+          if (item.type === "copy_edit" && item.originalText) {
             el.innerText = item.originalText
-            el.removeAttribute("data-agent-review-modified")
           }
+          el.removeAttribute("data-agent-review-modified")
+          el.removeAttribute("data-agent-review-id")
         }
       } catch {
         // Fallback
@@ -394,16 +478,23 @@ export default function AgentReviewToolbar({
   const handleClearAll = () => {
     if (window.confirm("Are you sure you want to clear all staged feedback?")) {
       items.forEach((item) => {
-        if (item.type === "copy_edit" && item.originalText && item.selector) {
-          try {
-            const el = document.querySelector<HTMLElement>(item.selector)
-            if (el) {
+        try {
+          const el =
+            (item.selector
+              ? document.querySelector<HTMLElement>(item.selector)
+              : null) ||
+            document.querySelector<HTMLElement>(
+              `[data-agent-review-id="${item.id}"]`,
+            )
+          if (el) {
+            if (item.type === "copy_edit" && item.originalText) {
               el.innerText = item.originalText
-              el.removeAttribute("data-agent-review-modified")
             }
-          } catch {
-            // ignore
+            el.removeAttribute("data-agent-review-modified")
+            el.removeAttribute("data-agent-review-id")
           }
+        } catch {
+          // ignore
         }
       })
       setItems([])
@@ -485,21 +576,17 @@ export default function AgentReviewToolbar({
           ref={popoverRef}
           style={{
             position: "fixed",
-            top: Math.max(
-              12,
-              Math.min(window.innerHeight - 340, activeTarget.rect.top),
-            ),
-            left: Math.max(
-              12,
-              Math.min(window.innerWidth - 440, activeTarget.rect.left),
-            ),
-            width: "420px",
+            top: popoverPos.top,
+            left: popoverPos.left,
+            width: "440px",
             maxWidth: "calc(100vw - 24px)",
+            maxHeight: "calc(100vh - 32px)",
             zIndex: 99999,
           }}
-          className="bg-neutral-900 border-2 border-emerald-500 shadow-2xl p-5 text-neutral-100 rounded-sm"
+          className="bg-neutral-900 border-2 border-emerald-500 shadow-2xl p-5 text-neutral-100 rounded-sm flex flex-col"
         >
-          <div className="flex items-center justify-between pb-3 border-b border-neutral-700 mb-4">
+          {/* Header */}
+          <div className="flex items-center justify-between pb-3 border-b border-neutral-700 mb-4 shrink-0">
             <div className="flex items-center gap-2 text-xs">
               <span className="px-1.5 py-0.5 bg-emerald-500 text-neutral-950 font-bold uppercase rounded-xs">
                 {activeTarget.tag}
@@ -516,7 +603,8 @@ export default function AgentReviewToolbar({
             </button>
           </div>
 
-          <div className="flex gap-2 mb-3">
+          {/* Mode Tabs */}
+          <div className="flex gap-2 mb-3 shrink-0">
             <button
               onClick={() => setActiveTab("copy")}
               className={`text-xs uppercase tracking-wider px-3 py-1.5 border transition-all cursor-pointer font-semibold ${
@@ -539,60 +627,64 @@ export default function AgentReviewToolbar({
             </button>
           </div>
 
-          {activeTab === "copy" ? (
-            <div className="space-y-3">
-              <div>
-                <label className="text-[10px] uppercase text-neutral-400 block mb-1">
-                  Original text:
-                </label>
-                <div className="text-xs text-neutral-400 bg-neutral-950 border border-neutral-800 p-2 max-h-20 overflow-y-auto italic">
-                  "{activeTarget.originalText}"
+          {/* Content Area (Scrollable if needed, so action buttons stay visible) */}
+          <div className="overflow-y-auto flex-1 pr-1 space-y-3 min-h-0">
+            {activeTab === "copy" ? (
+              <div className="space-y-3">
+                <div>
+                  <label className="text-[10px] uppercase text-neutral-400 block mb-1">
+                    Original text:
+                  </label>
+                  <div className="text-xs text-neutral-400 bg-neutral-950 border border-neutral-800 p-2 max-h-24 overflow-y-auto italic whitespace-pre-wrap leading-relaxed">
+                    "{activeTarget.originalText}"
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] uppercase text-emerald-400 font-bold block mb-1">
+                    New draft copy:
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={editCopyValue}
+                    onChange={(e) => setEditCopyValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                        handleSaveActiveTarget()
+                      }
+                    }}
+                    autoFocus
+                    className="w-full bg-neutral-950 border border-emerald-500/60 focus:border-emerald-500 text-neutral-100 p-2.5 text-xs font-mono focus:outline-none leading-relaxed"
+                    placeholder="Enter revised text..."
+                  />
                 </div>
               </div>
-
-              <div>
-                <label className="text-[10px] uppercase text-emerald-400 font-bold block mb-1">
-                  New draft copy:
-                </label>
-                <textarea
-                  rows={4}
-                  value={editCopyValue}
-                  onChange={(e) => setEditCopyValue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                      handleSaveActiveTarget()
-                    }
-                  }}
-                  autoFocus
-                  className="w-full bg-neutral-950 border border-emerald-500/60 focus:border-emerald-500 text-neutral-100 p-2.5 text-xs font-mono focus:outline-none leading-relaxed"
-                  placeholder="Enter revised text..."
-                />
+            ) : (
+              <div className="space-y-3">
+                <div>
+                  <label className="text-[10px] uppercase text-emerald-400 font-bold block mb-1">
+                    Design Directive / Instruction:
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={noteValue}
+                    onChange={(e) => setNoteValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                        handleSaveActiveTarget()
+                      }
+                    }}
+                    autoFocus
+                    className="w-full bg-neutral-950 border border-emerald-500/60 focus:border-emerald-500 text-neutral-100 p-2.5 text-xs font-mono focus:outline-none leading-relaxed"
+                    placeholder="e.g. 'Make this 3-column on desktop', 'Make text bolder', 'Change button to outline'..."
+                  />
+                </div>
               </div>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div>
-                <label className="text-[10px] uppercase text-emerald-400 font-bold block mb-1">
-                  Design Directive / Instruction:
-                </label>
-                <textarea
-                  rows={4}
-                  value={noteValue}
-                  onChange={(e) => setNoteValue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                      handleSaveActiveTarget()
-                    }
-                  }}
-                  autoFocus
-                  className="w-full bg-neutral-950 border border-emerald-500/60 focus:border-emerald-500 text-neutral-100 p-2.5 text-xs font-mono focus:outline-none leading-relaxed"
-                  placeholder="e.g. 'Make this 3-column on desktop', 'Make text bolder', 'Change button to outline'..."
-                />
-              </div>
-            </div>
-          )}
+            )}
+          </div>
 
-          <div className="flex items-center justify-between pt-3 mt-3 border-t border-neutral-800">
+          {/* Action buttons (Always visible at the bottom of popover) */}
+          <div className="flex items-center justify-between pt-3 mt-3 border-t border-neutral-800 shrink-0">
             <span className="text-[10px] text-neutral-400">
               Press <kbd className="text-emerald-400">⌘+Enter</kbd> to save
             </span>
@@ -605,7 +697,7 @@ export default function AgentReviewToolbar({
               </button>
               <button
                 onClick={handleSaveActiveTarget}
-                className="text-xs uppercase tracking-wider bg-emerald-500 text-neutral-950 font-bold px-4 py-1.5 hover:brightness-110 cursor-pointer transition-all"
+                className="text-xs uppercase tracking-wider bg-emerald-500 text-neutral-950 font-bold px-4 py-1.5 hover:brightness-110 cursor-pointer transition-all shadow-md"
               >
                 Apply Edit
               </button>

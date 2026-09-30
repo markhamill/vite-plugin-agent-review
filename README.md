@@ -229,6 +229,45 @@ Simply create a local development endpoint (`POST /api/dev/feedback`) in your ba
 
 ---
 
+## 🎯 Element Targeting and Viewport Ergonomics
+
+In complex web applications with repeated structures (such as comparison tables, pricing grids, and card matrices), simple selector generation and rigid popover placement can cause subtle bugs. `vite-plugin-agent-review` includes dedicated safeguards:
+
+1. **Unambiguous Ancestor Traversal**:
+   When generating CSS selectors, the generator climbs the DOM hierarchy and dynamically validates candidate paths against `document.querySelectorAll`. It resolves ancestor tags and nth-of-type indices until the selector uniquely resolves to exactly one element. Edits inside table cells or repeated rows will never collide or overwrite one another.
+
+2. **Leaf Container Targeting**:
+   Clicks strictly target leaf text nodes (`childElementCount === 0`) rather than parent layout containers or row wrappers. This ensures edits attach to the exact copy being revised.
+
+3. **DOM Identity Tracking**:
+   Edits are assigned unique review IDs stamped directly onto the DOM (`data-agent-review-id`). Live in-situ text changes remain tied to their originating elements even across local state re-renders.
+
+4. **Viewport-Aware Popover Clamping and Pinned Actions**:
+   The editing popover dynamically computes available viewport space. If an element sits near the bottom edge of the screen, the popover flips above the element. The popover uses a vertical flex layout with a scrollable text area and pinned action buttons (`Apply Edit` and `Cancel`), ensuring save controls are never pushed below the fold.
+
+---
+
+## 🛠️ Repository Maintenance and Committing Updates
+
+To commit and push your updates to your GitHub repository:
+
+```bash
+# 1. Inspect status and diff
+git status
+git diff
+
+# 2. Stage updated files
+git add AgentReviewToolbar.tsx README.md
+
+# 3. Commit changes
+git commit -m "Fix selector collisions in tables and improve popover viewport clamping"
+
+# 4. Push to GitHub
+git push origin main
+```
+
+---
+
 ## 📄 License
 
 MIT © [Mark Hamill](https://github.com/markhamill)
