@@ -252,6 +252,10 @@ export default function EditorialToolbar({
         path.unshift(`[data-section="${curr.getAttribute("data-section")}"]`)
         break
       }
+      if (curr.getAttribute("data-tab")) {
+        path.unshift(`[data-tab="${curr.getAttribute("data-tab")}"]`)
+        break
+      }
 
       let segment = curr.tagName.toLowerCase()
       const parent = curr.parentElement
@@ -374,23 +378,48 @@ export default function EditorialToolbar({
       const selector = generateSelector(target)
       const rect = target.getBoundingClientRect()
 
+      const normalize = (s: string) => s.replace(/\s+/g, " ").trim()
+
       // Check if this exact element has already been edited (using DOM tag or exact element reference)
       const existingId = target.getAttribute("data-editorial-id")
-      const existing = existingId
-        ? items.find((i) => i.id === existingId)
-        : items.find((i) => {
-            if (i.page !== currentView) return false
-            if (i.selector) {
-              try {
-                return document.querySelector(i.selector) === target
-              } catch {
-                return false
-              }
-            }
-            return false
-          })
+      let existing: DevFeedbackItem | undefined = undefined
 
-      const normalize = (s: string) => s.replace(/\s+/g, " ").trim()
+      if (existingId) {
+        const item = items.find((i) => i.id === existingId)
+        if (
+          item &&
+          (normalize(text) === normalize(item.originalText) ||
+            normalize(text) === normalize(item.newText || ""))
+        ) {
+          existing = item
+        } else {
+          // Stale attribute lingering from element reuse across tabs
+          target.removeAttribute("data-editorial-id")
+        }
+      }
+
+      if (!existing) {
+        existing = items.find((i) => {
+          if (i.page !== currentView) return false
+          if (i.selector) {
+            try {
+              if (document.querySelector(i.selector) === target) {
+                // Must ensure this element's text actually matches the edit!
+                if (
+                  normalize(text) === normalize(i.originalText) ||
+                  normalize(text) === normalize(i.newText || "")
+                ) {
+                  return true
+                }
+              }
+            } catch {
+              return false
+            }
+          }
+          return false
+        })
+      }
+
       const isAlreadyIntegrated =
         existing &&
         existing.type === "copy_edit" &&
